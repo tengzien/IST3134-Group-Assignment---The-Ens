@@ -1,0 +1,123 @@
+# Start all Hadoop services (HDFS, YARN, etc.)
+start-all.sh 
+
+# Switch to the Hadoop user
+sudo su - hadoop  
+
+# Download the dataset from S3
+wget https://ist3134assignment.s3.amazonaws.com/amazon_reviews_us_Books_v1_02.tsv
+
+# Create necessary directories in HDFS and upload the dataset
+hadoop fs -put amazon_reviews_us_Books_v1_02.tsv /user/hadoop
+hadoop fs -mkdir /user
+hadoop fs -mkdir /user/hadoop
+hadoop fs -put amazon_reviews_us_Books_v1_02.tsv /user/hadoop
+
+nano mapper.py
+#mapper script
+
+#!/usr/bin/env python3
+import sys
+
+# Define a set of stopwords to be removed during preprocessing
+stopwords = set([
+    "book", "read", "novel", "books", "reading", "author", "br", "<br", ">br", "<", "amazon", 
+    "kindle", "story", "character", "characters", "one", "two", "three", "four", "five", "first", 
+    "second", "third", "really", "also", "will", "make", "made", "much", "many", "can", "get", 
+    "got", "well", "like", "just", "even", "plot", "time", "find", "found", "thought", "felt", 
+    "way", "lot", "love", "loved", "would", "could", "see", "say", "said", "go", "going", "think", 
+    "thought", "give", "gave", "review", "reviews", "free", "copy", "received", "arc", "ebook", 
+    "netgalley", "thank", "thanks", "received", "advanced", "reader", "was", "were", "had", "has", 
+    "have", "my", "this", "that", "there", "their", "them", "they", "what", "which", "when", "where", 
+    "who", "how", "from", "about", "been", "more", "other", "some", "any", "than", "then", "these", 
+    "those", "such", "do", "does", "did", "doing", "having", "out", "up", "down", "in", "on", "off", 
+    "over", "under", "again", "further", "here", "there", "why", "all", "each", "few", "most", "its", 
+    "and", "or", "an", "as", "is", "are", "it", "be", "with", "his", "her", "by", "for", "at", "but", 
+    "not", "he", "she", "you", "me", "we", "us", "our", "yours", "ours", "theirs", "his", "hers", 
+    "between", "before", "after", "above", "below", "to", "of", "a", "the", "if", "your", "it's", 
+    "I'm", "you're", "I've", "we're", "they're", "she's", "he's", "that's", "this's", "those's", 
+    "it'd", "we'd", "you'd", "it'll", "you'll", "they'll", "he'll", "she'll", "I'd", "you'd", "we'd", 
+    "they'd", "I", "s", "d", "ll", "t", "and", "with", "can", "really", "just", "read", "one", "would", 
+    "didn't", "liked", "much", "could", "get", "go", "love", "lot", "think", "thought", "more", 
+    "found", "will", "make", "made", "lot", "many", "books", "even", "way", "find", "felt", "think", 
+    "thought", "said", "like", "time", "going", "novel", "character", "characters", "story", "plot", 
+    "see", "say", "lot", "did", "good", "well", "take", "people", "see", "seems", "lot", "want", 
+    "bit", "never", "liked", "felt", "still", "makes", "though", "without", "use", "took", "does", 
+    "part", "way", "around", "always", "another", "actually", "life", "become", "isn't", "sure", 
+    "highly", "anything","seemed", "became", "seems", "seem", "came", "several", "else", "place", 
+    "come", "small", "things", "everything", "thoughts", "wasn't", "although", "especially", 
+    "anything", "nothing", "someone", "sometimes", "every", "each", "different", "way", "anything", 
+    "sure", "actually", "always", "anyone", "became", "whether", "place", "things", "anyway", 
+    "becomes", "especially", "someone", "getting", "towards", "further", "away","without","/>",
+    "/><br","little","it.","-","book.","/>The",">","/","may","work","put", "know","need","--","/>",
+    "/>I","book,",",","years","back"," ","must","i","n","5","4","1","2","3", "0","so","very","into", 
+    "only","no", "because","through","should","n"
+])
+
+# Process each line of input
+for line in sys.stdin:
+    line = line.strip()  # Remove leading and trailing whitespace
+    words = line.split()  # Split the line into words
+    
+    for word in words:
+        word = word.lower()  # Convert word to lowercase
+        
+        # Output word and count of 1 if the word is not a stopword
+        if word not in stopwords:
+            print(f'{word}\t1')  # Print word and count separated by a tab
+
+#END OF MAPPER SCRIPT
+
+nano reducer.py
+#reducer script
+
+#!/usr/bin/env python3
+import sys
+import heapq
+
+# Function to get the top N words with the highest counts
+def top_n_words(counts, n):
+    return heapq.nlargest(n, counts.items(), key=lambda x: x[1])
+
+word_counts = {}
+
+# Process each line of input
+for line in sys.stdin:
+    line = line.strip()  # Remove leading and trailing whitespace
+    word, count = line.split('\t', 1)  # Split the line into word and count
+    
+    try:
+        count = int(count)  # Convert count to an integer
+    except ValueError:
+        continue  # Skip the line if count is not a valid integer
+    
+    # Aggregate word counts
+    if word in word_counts:
+        word_counts[word] += count
+    else:
+        word_counts[word] = count
+
+# Get the top 30 words by count
+top_words = top_n_words(word_counts, 30)
+
+# Output the top 30 words and their counts
+for word, count in top_words:
+    print(f'{word}\t{count}')  # Print word and count separated by a tab
+
+#END OF REDUCER SCRIPT
+
+# Remove the existing output directory if it exists
+hadoop fs -rm -r /user/hadoop/pc4
+
+# Run the MapReduce job using the streaming utility
+mapred streaming \
+-files mapper.py,reducer.py \  # Specify the mapper and reducer scripts
+-input /user/hadoop/amazon_reviews_us_Books_v1_02.tsv \  # Input file in HDFS
+-output /user/hadoop/pc4 \  # Output directory in HDFS
+-mapper "python3 mapper.py" \  # Command to run the mapper script
+-reducer "python3 reducer.py"  # Command to run the reducer script
+
+# Display the first 30 lines of the output
+hdfs dfs -cat /user/hadoop/pc4/part-00000 | head -n 30
+
+
