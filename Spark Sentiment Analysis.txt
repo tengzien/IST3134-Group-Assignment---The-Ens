@@ -1,0 +1,99 @@
+#Spark Sentiment Analysis
+
+from pyspark import SparkContext
+from pyspark.sql import SparkSession, Row
+from pyspark.ml.feature import Tokenizer, StopWordsRemover, CountVectorizer, IDF
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml import Pipeline
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+
+# Initialize Spark session and context
+spark = SparkSession.builder.appName("SentimentAnalysis").getOrCreate()
+sc = spark.sparkContext
+
+# Define a list of custom stopwords to be removed from the text
+custom_stopwords = ["book", "read", "novel", "books", "read", "reading", "author", "br", "<br", ">br", "<", 
+                    "amazon", "kindle", "novel", "story", "character", "characters", "one", "two", "three", 
+                    "four", "five", "first", "second", "third", "really", "also", "good", "great", "will", 
+                    "make", "made", "much", "many", "can", "get", "got", "well", "like", "just", "even", 
+                    "plot", "time", "find", "found", "thought", "felt", "way", "lot", "love", "loved", 
+                    "would", "could", "see", "say", "said", "go", "going", "think", "thought", "give", "gave", 
+                    "review", "reviews", "free", "copy", "received", "arc", "ebook", "netgalley", "thank", 
+                    "thanks", "received", "advanced", "reader", "recommend", "recommended", "was", "were", 
+                    "had", "has", "have", "my", "this", "that", "there", "their", "them", "they", "what", 
+                    "which", "when", "where", "who", "how", "from", "about", "been", "more", "other", "some", 
+                    "any", "than", "then", "these", "those", "such", "do", "does", "did", "doing", "having", 
+                    "out", "up", "down", "in", "on", "off", "over", "under", "again", "further", "here", 
+                    "there", "why", "all", "each", "few", "most", "its", "and", "or", "an", "as", "is", 
+                    "are", "it", "be", "with", "his", "her", "by", "for", "at", "but", "not", "he", "she", 
+                    "you", "me", "we", "us", "our", "yours", "ours", "theirs", "his", "hers", "between", 
+                    "before", "after", "above", "below", "to", "of", "a", "the", "if", "your", "it's", "I'm", 
+                    "you're", "I've", "we're", "they're", "she's", "he's", "that's", "this's", "those's", 
+                    "it'd", "we'd", "you'd", "it'll", "you'll", "they'll", "he'll", "she'll", "I'd", "you'd", 
+                    "we'd", "they'd", "I", "s", "d", "ll", "t", "and", "with", "can", "really", "just", "read", 
+                    "one", "would", "didn't", "liked", "much", "could", "get", "go", "love", "lot", "think", 
+                    "thought", "more", "found", "good", "great", "will", "make", "made", "lot", "many", 
+                    "books", "even", "way", "find", "felt", "think", "thought", "said", "like", "time", 
+                    "going", "novel", "character", "characters", "story", "plot", "see", "say", "lot", "did", 
+                    "good", "well", "take", "people", "see", "seems", "lot", "want", "bit", "never", "liked", 
+                    "felt", "still", "makes", "though", "without", "use", "took", "does", "part", "way", 
+                    "around", "always", "another", "actually", "different", "life", "become", "isn't", 
+                    "sure", "highly", "anything", "became", "seemed", "became", "seems", "seem", "less", 
+                    "came", "several", "else", "place", "come", "small", "things", "everything", "thoughts", 
+                    "wasn't", "although", "especially", "anything", "nothing", "someone", "sometimes", 
+                    "every", "each", "different", "way", "anything", "sure", "actually", "always", "anyone", 
+                    "became", "whether", "place", "things", "anyway", "becomes", "especially", "someone", 
+                    "getting", "towards", "further", "away", "without","/>","/><br","little","it.","-", 
+                    "book.","/>The",">","/","may","work","put","know","need","--","/>","/>I","book,",",","years",
+                    "back"," ","must"]
+
+# Load the Amazon reviews TSV file into an RDD (Resilient Distributed Dataset)
+rdd = sc.textFile("amazon_reviews_us_Books_v1_02.tsv")
+
+# Get the header from the TSV file and filter it out of the RDD
+header = rdd.first()
+rdd_split_no_header = rdd.filter(lambda line: line != header).map(lambda line: line.split("\t"))
+
+# Convert the RDD to a DataFrame with 'label' (rating) and 'reviewText' columns
+# Assuming the 9th column is the label (rating) and the 14th column is the review text
+reviews_rdd = rdd_split_no_header.map(lambda fields: Row(label=int(fields[8]), reviewText=fields[13]))
+data = spark.createDataFrame(reviews_rdd)
+
+# Define the stages of the machine learning pipeline
+
+# 1. Tokenize the review texts into individual words
+tokenizer = Tokenizer(inputCol="reviewText", outputCol="words")
+
+# 2. Remove stopwords from the tokenized words
+remover = StopWordsRemover(inputCol="words", outputCol="filtered_words").setStopWords(
+    StopWordsRemover().getStopWords() + custom_stopwords
+)
+
+# 3. Convert the filtered words into a vector of raw token counts (Bag of Words model)
+vectorizer = CountVectorizer(inputCol="filtered_words", outputCol="raw_features")
+
+# 4. Compute the Inverse Document Frequency (IDF) for the raw token counts to reweight the term frequencies
+idf = IDF(inputCol="raw_features", outputCol="features")
+
+# 5. Define the Logistic Regression model for binary classification (positive/negative sentiment)
+lr = LogisticRegression(featuresCol="features", labelCol="label")
+
+# Create a pipeline to chain the data processing steps and the model training step
+pipeline = Pipeline(stages=[tokenizer, remover, vectorizer, idf, lr])
+
+# Split the data into training (80%) and testing (20%) sets
+(trainingData, testData) = data.randomSplit([0.8, 0.2])
+
+# Train the model using the training data
+model = pipeline.fit(trainingData)
+
+# Make predictions on the test data using the trained model
+predictions = model.transform(testData)
+
+# Evaluate the model's accuracy using MulticlassClassificationEvaluator
+evaluator = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction", metricName="accuracy")
+accuracy = evaluator.evaluate(predictions)
+print(f"Accuracy: {accuracy:.2f}")
+
+# Stop the Spark session
+spark.stop()
