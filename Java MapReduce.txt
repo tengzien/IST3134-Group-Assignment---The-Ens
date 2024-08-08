@@ -1,0 +1,49 @@
+#JAVA MAPREDUCE
+
+# Create a JAR file named 'wc.jar' from the compiled Java classes in the 'stubs' directory
+jar cvf wc.jar stubs/*.class
+
+# Remove any existing output directory named 'wordcounts' in HDFS
+hadoop fs -rm -r /user/hadoop/wordcounts
+
+# Format the Hadoop NameNode (this should be done only once during initial setup)
+hdfs namenode -format
+
+# Start all Hadoop services (HDFS, YARN, etc.)
+start-all.sh
+
+# Navigate to the project directory
+cd ~/IST3134
+
+# Unzip the 'wordcount.zip' file containing the Java MapReduce code
+unzip wordcount.zip
+
+# Download the dataset from S3
+wget https://ist3134assignment.s3.amazonaws.com/amazon_reviews_us_Books_v1_02.tsv
+
+# Create necessary directories in HDFS for the Hadoop user
+hadoop fs -mkdir /user
+hadoop fs -mkdir /user/hadoop
+
+# Upload the dataset to HDFS
+hadoop fs -put amazon_reviews_us_Books_v1_02.tsv /user/hadoop
+
+# Set up the workspace directory and copy the 'wordcount' directory into it
+mkdir ~/workspace
+cp -r wordcount/ ~/workspace/
+
+# Navigate to the source directory where the Java files are located
+cd ~/workspace/wordcount/src
+
+# Get the Hadoop classpath for compiling the Java code
+hadoop classpath
+
+# Compile the Java files in the 'stubs' directory using the Hadoop classpath
+javac -classpath `hadoop classpath` stubs/*.java
+
+# Package the compiled Java classes into a JAR file named 'wc.jar'
+jar cvf wc.jar stubs/*.class
+
+# Run the MapReduce job using the JAR file, specifying the input dataset and output directory
+hadoop jar wc.jar stubs.WordCount amazon_reviews_us_Books_v1_02.tsv wordcounts
+
