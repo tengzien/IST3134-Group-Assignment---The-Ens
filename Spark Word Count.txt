@@ -1,0 +1,63 @@
+#SPARK WORD COUNT
+
+from pyspark import SparkContext
+from pyspark.sql import SparkSession, Row
+from pyspark.sql.functions import col, split
+from pyspark.ml.feature import StopWordsRemover
+
+# Initialize Spark context and session
+sc = SparkContext(appName="AmazonReviewsStopwords")
+spark = SparkSession.builder.appName("AmazonReviewsStopwords").getOrCreate()
+
+# Load the TSV file into an RDD
+rdd = sc.textFile("amazon_reviews_us_Books_v1_02.tsv")
+
+# Get the header row and filter it out from the RDD
+header = rdd.first()
+rdd_split_no_header = rdd.filter(lambda line: line != header).map(lambda line: line.split("\t"))
+
+# Convert the RDD to a DataFrame, extracting the review text (assuming it's in the 14th column, index 13)
+reviews_rdd = rdd_split_no_header.map(lambda fields: Row(reviewText=fields[13]))
+reviews_df = spark.createDataFrame(reviews_rdd)
+
+# Show the first few reviews before removing stopwords
+print("Original Reviews:")
+reviews_df.show(5, truncate=False)
+
+# Define a custom list of stopwords to remove from the reviews
+custom_stopwords = ["book", "read", "novel", "books", "read", "reading", "author","br", "<br", ">br", "<","amazon", "kindle", "novel", "story", "character", "characters", "one", "two", "three", "four", "five", "first", "second", "third", "really", "also", "good", "great", "will", "make", "made", "much", "many", "can", "get", "got", "well", "like", "just", "even", "plot", "time", "find", "found", "thought", "felt", "way", "lot", "love", "loved", "would", "could", "see", "say", "said", "go", "going", "think", "thought", "give", "gave", "review", "reviews", "free", "copy", "received", "arc", "ebook", "netgalley", "thank", "thanks", "received", "advanced", "reader", "recommend", "recommended", "was", "were", "had", "has", "have", "my", "this", "that", "there", "their", "them", "they", "what", "which", "when", "where", "who", "how", "from", "about", "been", "more", "other", "some", "any", "than", "then", "these", "those", "such", "do", "does", "did", "doing", "having", "out", "up", "down", "in", "on", "off", "over", "under", "again", "further", "here", "there", "why", "all", "each", "few", "most", "its", "and", "or", "an", "as", "is", "are", "it", "be", "with", "his", "her", "by", "for", "at", "but", "not", "he", "she", "you", "me", "we", "us", "our", "yours", "ours", "theirs", "his", "hers", "between", "before", "after", "above", "below", "to", "of", "a", "the", "if", "your", "it's", "I'm", "you're", "I've", "we're", "they're", "she's", "he's", "that's", "this's", "those's", "it'd", "we'd", "you'd", "it'll", "you'll", "they'll", "he'll", "she'll", "I'd", "you'd", "we'd", "they'd", "I", "s", "d", "ll", "t", "and", "with", "can", "really", "just", "read", "one", "would", "didn't", "liked", "much", "could", "get", "go", "love", "lot", "think", "thought", "more", "found", "good", "great", "will", "make", "made", "lot", "many", "books", "even", "way", "find", "felt", "think", "thought", "said", "like", "time", "going", "novel", "character", "characters", "story", "plot", "see", "say", "lot", "did", "good", "well", "take", "people", "see", "seems", "lot", "want", "bit", "never", "liked", "felt", "still", "makes", "though", "without", "use", "took", "does", "part", "way", "around", "always", "another", "actually", "different", "life", "become", "isn't", "sure", "highly", "anything", "became", "seemed", "became", "seems", "seem", "less", "came", "several", "else", "place", "come", "small", "things", "everything", "thoughts", "wasn't", "although", "especially", "anything", "nothing", "someone", "sometimes", "every", "each", "different", "way", "anything", "sure", "actually", "always", "anyone", "became", "whether", "place", "things", "anyway", "becomes", "especially", "someone", "getting", "towards", "further", "away", "without","/>","/><br","little","it.","-","book.","/>The",">","/","may","work","put","know","need","--","/>","/>I","book,",",","years","back"," ","must"]
+
+# Tokenize the review texts into individual words
+tokenized_reviews = reviews_df.withColumn("words", split(col("reviewText"), " "))
+
+# Initialize StopWordsRemover with default and custom stopwords
+stopwords_remover = StopWordsRemover(inputCol="words", outputCol="filteredWords")
+default_stopwords = stopwords_remover.getStopWords()
+
+# Combine the default stopwords with custom stopwords
+combined_stopwords = default_stopwords + custom_stopwords
+stopwords_remover = stopwords_remover.setStopWords(combined_stopwords)
+
+# Apply the StopWordsRemover to remove stopwords from the tokenized words
+clean_reviews_df = stopwords_remover.transform(tokenized_reviews)
+
+# Show the reviews after stopwords have been removed
+print("Reviews after stopwords removal:")
+clean_reviews_df.select("filteredWords").show(truncate=False)
+
+# Optional: To create a word count and show the most frequent words
+from pyspark.sql.functions import explode, count
+
+# Explode the 'filteredWords' column to create a row for each word, then count occurrences
+word_counts_df = clean_reviews_df.withColumn("word", explode(col("filteredWords"))) \
+                                  .groupBy("word") \
+                                  .agg(count("word").alias("count")) \
+                                  .orderBy(col("count").desc())
+
+# Show the top 20 most frequent words in the reviews
+print("Most frequent words:")
+word_counts_df.show(20, truncate=False)
+
+# Stop the SparkContext and SparkSession
+sc.stop()
+spark.stop()
